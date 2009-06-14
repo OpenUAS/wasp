@@ -31,6 +31,7 @@ typedef struct __CommStatus {
 
 typedef uint8_t (*CommMessageCallback_t)(CommMessage_t *message);
 
+///< @todo What is the result of using extern here? Why not static?
 extern CommMessageCallback_t    comm_callback[COMM_NB];
 extern CommMessage_t            comm_message[COMM_NB];
 extern CommStatus_t             comm_status[COMM_NB];
@@ -70,8 +71,18 @@ void comm_send_ch ( CommChannel_t chan, uint8_t c );
  */
 void comm_send_message ( CommChannel_t chan, CommMessage_t* message );
 
-uint8_t
-comm_send_message_by_id (CommChannel_t chan, uint8_t msgid);
+/**
+ * @brief Send comm status message
+ * 
+ * As the comm subsystem holds it's status internally, it can send
+ * status messages just by the correct id. It returns 0 if the ID could
+ * not be found and the status message has not been send.
+ *
+ * @param chan the comm channel to use
+ * @param msgid message id of the status message to send
+ * @return 0 if message id could not be found or error occured, 1 on success
+ */
+uint8_t comm_send_message_comm_status(CommChannel_t chan, uint8_t msgid);
 
 /**
  * @brief Get one char from the comm channel
@@ -83,17 +94,23 @@ comm_send_message_by_id (CommChannel_t chan, uint8_t msgid);
  */
 uint8_t comm_get_ch( CommChannel_t chan );
 
-uint8_t
-comm_check_free_space ( CommChannel_t chan, uint8_t len );
+/**
+ * @brief Check free space to send on a channel
+ *
+ * This stub has to be implemented by each individual platform
+ *
+ * @param chan The channel write to
+ * @return 1 if space is available, 0 else
+ */
+uint8_t comm_check_free_space ( CommChannel_t chan, uint8_t len );
 
-void
-comm_start_message ( CommChannel_t chan, uint8_t id, uint8_t len );
+void comm_start_message( CommChannel_t chan, uint8_t id, uint8_t len );
 
 void
 comm_end_message ( CommChannel_t chan );
 
-uint8_t
-comm_parse ( CommChannel_t chan );
+///< @todo not totally clear what the parsing output is.
+uint8_t comm_parse(CommChannel_t chan);
 
 #endif /* COMM_H */
 
