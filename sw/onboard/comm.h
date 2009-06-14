@@ -21,12 +21,12 @@ typedef enum {
 } ParseState_t;
     
 typedef struct __CommStatus {
-    uint8_t ck_a;
-    uint8_t ck_b;
+    uint8_t ck_a; ///< Checksum byte 1
+    uint8_t ck_b; ///< Checksum byte 2
     uint8_t msg_received;
-    uint8_t buffer_overrun;
-    uint8_t parse_error;
-    ParseState_t parse_state;
+    uint8_t buffer_overrun; ///< Number of buffer overruns
+    uint8_t parse_error; ///< Number of parse errors
+    ParseState_t parse_state; ///< Parsing state machine
 } CommStatus_t;
 
 typedef bool_t (*CommMessageCallback_t)(CommMessage_t *message);
