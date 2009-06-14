@@ -5,10 +5,12 @@
 #include "comm.h"
 #include "sys_time.h"
 
-CommMessageCallback_t    comm_callback[COMM_NB];
-CommMessage_t            comm_message[COMM_NB];
-CommStatus_t             comm_status[COMM_NB];
-bool_t                   comm_channel_used[COMM_NB];
+// Global static variables holding the comm buffers
+// Comm number (COMM_NB) is the number of comm channels
+static CommMessageCallback_t    comm_callback[COMM_NB];
+static CommMessage_t            comm_message[COMM_NB];
+static CommStatus_t             comm_status[COMM_NB];
+static uint8_t                  comm_channel_used[COMM_NB];
 
 #define COMM_SEND_CH(_chan, _byte) {                    \
     comm_status[_chan].ck_a += _byte;	                \
@@ -70,7 +72,7 @@ comm_send_message ( CommChannel_t chan, CommMessage_t *message )
     rxmsg->payload[rxmsg->idx] = _x;     \
     rxmsg->idx++;
 
-bool_t
+uint8_t
 comm_parse ( CommChannel_t chan )
 {
     CommMessage_t *rxmsg = &comm_message[chan];
@@ -139,7 +141,7 @@ comm_parse ( CommChannel_t chan )
     return comm_status[chan].msg_received;
 }
 
-bool_t
+uint8_t
 comm_send_message_by_id (CommChannel_t chan, uint8_t msgid)
 {
 #ifdef MESSAGE_ID_TEST_MESSAGE
@@ -170,7 +172,7 @@ comm_send_message_by_id (CommChannel_t chan, uint8_t msgid)
     return TRUE;
 }
 
-bool_t
+uint8_t
 comm_event_task ( CommChannel_t chan ) 
 {
     bool_t handled;
