@@ -121,7 +121,8 @@ class _CWriter(_Writer):
             "%s_H" % self.note.upper(),
             generatedfrom=self.messages_path)
 
-        print "#include \"std.h\""
+        #print "#include \"std.h\""
+        print "#include \"inttypes.h\""
         print
         print "#define COMM_STX 0x99"
         print "#define COMM_MAX_PAYLOAD_LEN 256"
