@@ -22,7 +22,8 @@ comm_init ( CommChannel_t chan )
 #endif
 
     for (uint8_t i = 0; i < COMM_NB; i++) {
-        comm_callback[i] = 0;
+        comm_callback_rx[i] = 0;
+        comm_callback_tx[i] = 0;
     
         comm_status[i].parse_state = STATE_UNINIT;
         comm_status[i].msg_received = FALSE;
@@ -82,3 +83,11 @@ comm_check_free_space ( CommChannel_t chan, uint8_t len )
     else
         return FALSE;
 }
+
+void
+comm_overrun ( CommChannel_t chan )
+{
+    if (chan < COMM_NB)
+        comm_status[chan].buffer_overrun++;
+}
+

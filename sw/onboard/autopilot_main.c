@@ -35,16 +35,14 @@
 #include "actuators_buss_twi_blmc_hw.h"
 
 #include "rc.h"
+
 #include "comm.h"
+#include "comm-autopilot.h"
 
 
 #include "booz2_imu.h"
 #include "booz2_analog_baro.h"
 #include "booz2_battery.h"
-
-#ifdef USE_AMI601
-#include "arm7/AMI601.h"
-#endif
 
 #include "booz2_fms.h"
 #include "booz2_autopilot.h"
@@ -87,7 +85,9 @@ STATIC_INLINE void booz2_main_init( void ) {
   actuators_init();
 
   rc_init();
+
   comm_init(COMM_1);
+  comm_add_tx_callback(COMM_1, comm_autopilot_send);
 
   gps_init();
 
@@ -96,10 +96,6 @@ STATIC_INLINE void booz2_main_init( void ) {
   booz2_battery_init();
   booz2_imu_impl_init();
   booz2_imu_init();
-#ifdef USE_AMI601
-  i2c1_init();
-  ami601_init();
-#endif
 
   booz_fms_init();
   booz2_autopilot_init();
@@ -117,15 +113,8 @@ STATIC_INLINE void booz2_main_init( void ) {
   int_enable();
 }
 
-#ifdef USE_AMI601
-#define ReadMag() ami601_read()
-#elif USE_MICROMAG
-#define ReadMag() Booz2MicromagScheduleRead()
-#else
-#define ReadMag() {}
-#endif
-
 STATIC_INLINE void booz2_main_periodic( void ) {
+  static uint8_t _cnt = 0;
   //  t0 = T0TC;
 
   booz2_imu_periodic();
@@ -134,28 +123,33 @@ STATIC_INLINE void booz2_main_periodic( void ) {
   /* set actuators     */
   SetActuatorsFromCommands(booz2_autopilot_motors_on);
 
-  PeriodicPrescaleBy10(							\
-    {						                        \
-      rc_periodic_task();		                        \
-      if (rc_status != RC_OK)						\
-	booz2_autopilot_set_mode(BOOZ2_AP_MODE_FAILSAFE);		\
-    },									\
-    {									\
+  /* Run the following tasks 10x times slower than the periodic rate */
+  _cnt++;
+  if (_cnt >= 10)
+    _cnt = 0;
+
+  switch (_cnt)
+  {
+    case 0:
+        rc_periodic_task();
+        if (rc_status == RC_OK)
+            led_on(RC_LED);
+        else
+        {
+            led_off(RC_LED);
+            booz2_autopilot_set_mode(BOOZ2_AP_MODE_FAILSAFE);
+        }
+        break;
+    case 1:
         comm_periodic_task(COMM_1);
-    },									\
-    {									\
-      ReadMag();							\
-    },									\
-    {									\
-      booz_fms_periodic();						\
-    },									\
-    {},									\
-    {},									\
-    {},									\
-    {},									\
-    {},									\
-    {}									\
-    );									\
+        break;
+    case 2:
+        micromag_schedule_read();
+        break;
+    case 3:
+        booz_fms_periodic();
+        break;
+    }
 
   //  t1 = T0TC;
   //  diff = t1 - t0;
@@ -181,15 +175,13 @@ STATIC_INLINE void booz2_main_event( void ) {
     booz_ins_update_gps();
   }
 
-#ifdef USE_AMI601
-  AMI601Event(on_mag_event);
-#endif
-#ifdef USE_MICROMAG
-  Booz2ImuSpiEvent(booz2_max1168_read,booz2_micromag_read);
-  Booz2MicromagEvent(on_mag_event);
-#else
-  Booz2ImuSpiEvent(booz2_max1168_read);
-#endif
+  Booz2ImuSpiEvent(booz2_max1168_read,micromag_read);
+
+  if ( micromag_event() )
+  {
+      on_mag_event();
+      micromag_reset();
+  }
 
   comm_event_task(COMM_1);
 }
@@ -220,19 +212,9 @@ static inline void on_baro_event( void ) {
 
 
 static inline void on_mag_event(void) {
-#ifdef USE_AMI601
-  booz_imu.mag_unscaled.x = ami601_val[IMU_MAG_X_CHAN];
-  booz_imu.mag_unscaled.y = ami601_val[IMU_MAG_Y_CHAN];
-  booz_imu.mag_unscaled.z = ami601_val[IMU_MAG_Z_CHAN];
-
-  Booz2ImuScaleMag();
-  ami601_status = AMI601_IDLE;
-#endif
-#ifdef USE_MICROMAG
   booz_imu.mag_unscaled.x = booz2_micromag_values[IMU_MAG_X_CHAN];
   booz_imu.mag_unscaled.y = booz2_micromag_values[IMU_MAG_Y_CHAN];
   booz_imu.mag_unscaled.z = booz2_micromag_values[IMU_MAG_Z_CHAN];
 
   Booz2ImuScaleMag();
-#endif
 }

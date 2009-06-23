@@ -5,9 +5,7 @@
 #include "sys_time.h"
 #include "led.h"
 #include "comm.h"
-
-#include "booz2_imu.h"
-#include "booz2_imu_b2.h"
+#include "rc.h"
 
 #include "interrupt_hw.h"
 
@@ -15,9 +13,6 @@
 static inline void main_init( void );
 static inline void main_periodic_task( void );
 static inline void main_event_task( void );
-
-static inline void on_imu_event(void);
-static inline void on_mag_event(void);
 
 int main( void ) {
     main_init();
@@ -31,48 +26,29 @@ int main( void ) {
 }
 
 static inline void main_init( void ) {
-  hw_init();
-  sys_time_init();
-  led_init();
+    hw_init();
+    sys_time_init();
+    led_init();
 
-  comm_init(COMM_1);
+    comm_init(COMM_1);
 
-  booz2_imu_impl_init();
-  booz2_imu_init();
+    rc_init();
 
-  int_enable();
+    int_enable();
 }
 
 static inline void main_periodic_task( void ) {
     comm_periodic_task(COMM_1);
-
-    RunOnceEvery(100, {
-        led_toggle(3);
-    });
-
-    RunOnceEvery(10, {
-        micromag_schedule_read();
-    });
-
-    booz2_imu_periodic();
+    rc_periodic_task();
 }
 
 static inline void main_event_task( void )
 {
     comm_event_task(COMM_1);
-
-    Booz2ImuEvent(on_imu_event);
-    
-    Booz2ImuSpiEvent(booz2_max1168_read,micromag_read);
-
-    if ( micromag_event() )
-    {
-        on_mag_event();
-        micromag_reset();
-    }
-
+    rc_event_task();
 }
 
+#if 0
 #define TICKS 30
 static inline void on_imu_event(void)
 {
@@ -98,12 +74,6 @@ static inline void on_imu_event(void)
                 &booz_imu.accel_unscaled.x,
 			    &booz_imu.accel_unscaled.y,
 			    &booz_imu.accel_unscaled.z);
-
-        MESSAGE_SEND_IMU_MAG_RAW(
-                COMM_1,
-                &booz_imu.mag_unscaled.x,
-			    &booz_imu.mag_unscaled.y,
-			    &booz_imu.mag_unscaled.z);
     }
     else if (cnt == (TICKS / 2))
     {
@@ -120,19 +90,7 @@ static inline void on_imu_event(void)
                 &booz_imu.accel.x,
                 &booz_imu.accel.y,
                 &booz_imu.accel.z);
-
-        MESSAGE_SEND_WASP_MAG(
-                COMM_1,
-                &booz_imu.mag.x,
-			    &booz_imu.mag.y,
-			    &booz_imu.mag.z);
     }
 }
+#endif
 
-static inline void on_mag_event(void) {
-  booz_imu.mag_unscaled.x = booz2_micromag_values[IMU_MAG_X_CHAN];
-  booz_imu.mag_unscaled.y = booz2_micromag_values[IMU_MAG_Y_CHAN];
-  booz_imu.mag_unscaled.z = booz2_micromag_values[IMU_MAG_Z_CHAN];
-
-  Booz2ImuScaleMag();
-}

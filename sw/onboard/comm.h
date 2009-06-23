@@ -29,10 +29,11 @@ typedef struct __CommStatus {
     ParseState_t parse_state; ///< Parsing state machine
 } CommStatus_t;
 
-typedef uint8_t (*CommMessageCallback_t)(CommMessage_t *message);
+typedef uint8_t (*CommRXMessageCallback_t)(CommChannel_t chan, CommMessage_t *message);
+typedef uint8_t (*CommTXMessageCallback_t)(CommChannel_t chan, uint8_t msgid);
 
-///< @todo What is the result of using extern here? Why not static?
-extern CommMessageCallback_t    comm_callback[COMM_NB];
+extern CommRXMessageCallback_t  comm_callback_rx[COMM_NB];
+extern CommTXMessageCallback_t  comm_callback_tx[COMM_NB];
 extern CommMessage_t            comm_message[COMM_NB];
 extern CommStatus_t             comm_status[COMM_NB];
 extern uint8_t                  comm_channel_used[COMM_NB];
@@ -41,6 +42,12 @@ extern uint8_t                  comm_channel_used[COMM_NB];
  * @brief Initialize the communication channel
  */
 void comm_init ( CommChannel_t chan );
+
+void
+comm_add_rx_callback ( CommChannel_t chan, CommRXMessageCallback_t cb);
+
+void
+comm_add_tx_callback ( CommChannel_t chan, CommTXMessageCallback_t cb);
 
 void
 comm_periodic_task ( CommChannel_t chan );
@@ -111,6 +118,9 @@ comm_end_message ( CommChannel_t chan );
 
 ///< @todo not totally clear what the parsing output is.
 uint8_t comm_parse(CommChannel_t chan);
+
+void
+comm_overrun ( CommChannel_t chan );
 
 #endif /* COMM_H */
 

@@ -54,15 +54,13 @@ static void SSP_ISR(void) {
        booz2_imu_spi_selected = BOOZ2_SPI_NONE;
      }
      break;
-#ifdef USE_MICROMAG
     case BOOZ2_SPI_SLAVE_MM:
      {
-       MmOnSpiIt();
+       micromag_OnSpiIt();
        if (booz2_micromag_status == MM_DATA_AVAILABLE)
          booz2_imu_spi_selected = BOOZ2_SPI_NONE;
      }
      break;
-#endif
  }
 
  VICVectAddr = 0x00000000; /* clear this interrupt from the VIC */

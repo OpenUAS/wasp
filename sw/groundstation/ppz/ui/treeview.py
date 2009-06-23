@@ -1,5 +1,6 @@
-import gobject
+import glib
 import gtk
+import time
 
 class MessageTreeStore(gtk.TreeStore):
 
@@ -7,23 +8,23 @@ class MessageTreeStore(gtk.TreeStore):
     OBJECT_IDX,     \
     EDITABLE_IDX,   \
     VALUE_IDX,      \
-    FIELDS_IDX =    range(5)
+    TIME_IDX =      range(5)
 
     def __init__(self):
         gtk.TreeStore.__init__(self, 
-            str,        #NAME, message.name or field.name
-            object,     #OBJECT, message or field underlying python object
-            bool,       #EDITABLE, true for fields
-            object,     #VALUE, value of field
-            object)     #FIELDS, list of fields, only set for message rows
+                str,        #NAME, message.name or field.name
+                object,     #OBJECT, message or field underlying python object
+                bool,       #EDITABLE, true for fields
+                object,     #VALUE, value of field
+                int)        #TIME, time last message was received
 
         self._message_ids = {}
 
     def add_message(self, message):
         fields = message.get_fields()
-        m = self.append(None, (message.name, message, False, None, fields))
+        m = self.append(None, ( message.name, message, False, None, int(time.time()) ))
         for f in fields:
-            self.append(m, (f.name, f, True, f.get_default_value(), None))
+            self.append(m, ( f.name, f, True, f.get_default_value(), 0 ))
         return m
 
     def update_message(self, message, payload, add=True):
@@ -39,7 +40,11 @@ class MessageTreeStore(gtk.TreeStore):
         nkids = self.iter_n_children(_iter)
 
         vals = message.unpack_values(payload)
+        vals = message.get_field_values(vals)
         assert len(vals) == nkids
+
+        #update the time this message was received
+        self.set_value(_iter, MessageTreeStore.TIME_IDX, int(time.time()))
 
         for i in range(nkids):
             self.set_value(
@@ -48,7 +53,7 @@ class MessageTreeStore(gtk.TreeStore):
                    vals[i])
 
 class MessageTreeView(gtk.TreeView):
-    def __init__(self, messagetreemodel, editable=True):
+    def __init__(self, messagetreemodel, editable=True, show_dt=False):
         gtk.TreeView.__init__(self, messagetreemodel)
 
         self.insert_column_with_attributes(-1, "Name",
@@ -63,6 +68,15 @@ class MessageTreeView(gtk.TreeView):
             col = gtk.TreeViewColumn("Value", rend)
         col.set_cell_data_func(rend, self._get_field_value)
         self.append_column(col)
+
+        if show_dt:
+            self.insert_column_with_data_func(-1, "dt",
+                gtk.CellRendererText(),
+                self._get_dt_value)
+
+            #schedule a redraw of the time column every second
+            glib.timeout_add_seconds(1, self._redraw_dt, messagetreemodel)
+
 
         self.get_selection().set_mode(gtk.SELECTION_SINGLE)
 
@@ -79,6 +93,25 @@ class MessageTreeView(gtk.TreeView):
             value = field.interpret_value_from_user_string(new_text, default=old)
 
         model.set_value(_iter, MessageTreeStore.VALUE_IDX, value)
+
+    def _redraw_dt(self, model):
+        _iter = model.get_iter_root()
+        while _iter:
+            model.row_changed(
+                    model.get_path(_iter),
+                    _iter)
+            _iter = model.iter_next(_iter)
+        return True
+
+    def _get_dt_value(self, column, cell, model, _iter):
+        txt = ""
+
+        #make sure we set the value on top level, aka message, rows
+        if model.iter_depth(_iter) == 0:
+            t1 = model.get_value(_iter, MessageTreeStore.TIME_IDX)
+            txt = "%ss" % ( int(time.time()) - t1 )
+
+        cell.set_property("text", txt)
 
     def _get_field_value(self, column, cell, model, _iter):
         value = model.get_value(_iter, MessageTreeStore.VALUE_IDX)
@@ -104,13 +137,16 @@ class MessageTreeView(gtk.TreeView):
             _iter = model.iter_parent(_iter)
 
         message = model.get_value(_iter, MessageTreeStore.OBJECT_IDX)
-        fields = model.get_value(_iter, MessageTreeStore.FIELDS_IDX)
         values = []
 
         _iter = model.iter_children(_iter)
         while _iter:
             val = model.get_value(_iter, MessageTreeStore.VALUE_IDX)
-            values.append(val)
+            f = model.get_value(_iter, MessageTreeStore.OBJECT_IDX)
+            if f.is_array:
+                values += val
+            else:
+                values.append(val)
             _iter = model.iter_next(_iter)
 
         return message, values

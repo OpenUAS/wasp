@@ -4,39 +4,36 @@
 import xmlobject
 import gentools
 
+try:
+    import ppz.messages as messages
+except ImportError:
+    import messages
+
+
 import string
 import optparse
 import re
 import os.path
 import sys
 
-LENGTHS = {
-    "uint8"     :   1,
-    "int8"      :   1,
-    "uint16"    :   2,
-    "int16"     :   2,
-    "uint32"    :   4,
-    "int32"     :   4,
-    "float"     :   4,
-}
-ARRAY_LENGTH = re.compile("^([a-z0-9]+)\[(\d{1,2})\]$")
+class CField(messages.Field):
 
-def get_field_length(_type):
-    #check if it is an array
-    m = ARRAY_LENGTH.match(_type)
-    if m:
-        _type, _len = m.groups()
-        return LENGTHS[_type] * int(_len)
-    else:
-        return LENGTHS[_type]
+    def get_ppz_type(self):
+        if self.type == "char":
+            return self.type
+        else:
+            return self.type+"_t"
 
 class Periodic:
 
-    STRUCT =                                    \
-    "typedef struct __PeriodicMessage {\n"      \
-    "    uint16_t    target;\n"                 \
-    "    uint16_t    cnt;\n"                    \
-    "    uint8_t     msgid;\n"                  \
+    STRUCT =                                                                   \
+    "/**\n"                                                                    \
+    " * Description of a periodic message.\n"                                  \
+    " */\n"                                                                    \
+    "typedef struct __PeriodicMessage {\n"                                     \
+    "    uint16_t    target;\n"                                                \
+    "    uint16_t    cnt;\n"                                                   \
+    "    uint8_t     msgid;\n"                                                 \
     "} PeriodicMessage_t;"
     #use a uint8_t for counting how many main iterations
     #to wait until releasing this message for transmission
@@ -60,9 +57,12 @@ class Periodic:
     def get_initializer(self):
         return "{ %d, %d, MESSAGE_ID_%s }" % (self._target, 0, self._message)
 
-class Message:
+class CMessage(messages.Message):
 
     STRUCT =                                                                     \
+    "/**\n"                                                                      \
+    " * A message to be sent.\n"                                                 \
+    " */\n"                                                                      \
     "typedef struct __CommMessage {\n"                                           \
     "    uint8_t acid;   /**< Aircraft ID, id of message sender */\n"            \
     "    uint8_t msgid;  /**< ID of message in payload */\n"                     \
@@ -74,20 +74,14 @@ class Message:
     "} CommMessage_t;" 
 
     def __init__(self, m):
-        self.name = m.name
-        if int(m.id) <= 255:
-            self.id = int(m.id)
-        else:
-            raise Exception("Message IDs must be <= 255")
-        try:
-            self.fields = xmlobject.ensure_list(m.field)
-        except AttributeError:
-            self.fields = []
+        messages.Message.__init__(self, m, CField)
+        self.sizes = ["0"] + [str(f.length) for f in self.fields]
 
-        sizes = [get_field_length(f.type) for f in self.fields]
+    def print_id(self):
+        print "#define MESSAGE_ID_%s %d" % (self.name, self.id)
 
-        self.size = sum(sizes)
-        self.sizes = ["0"] + [str(s) for s in sizes]
+    def print_length(self):
+        print "#define MESSAGE_LENGTH_%s (%s)" % (self.name, "+".join(self.sizes))
 
 class _Writer(object):
 
@@ -108,14 +102,6 @@ class _Writer(object):
 
 class _CWriter(_Writer):
 
-    def _print_id(self, m):
-        name = m.name.upper()
-        print "#define MESSAGE_ID_%s %d" % (name, m.id)
-
-    def _print_length(self, m):
-        name = m.name.upper()
-        print "#define MESSAGE_LENGTH_%s (%s)" % (name, "+".join(m.sizes))
-
     def preamble(self):
         gentools.print_header(
             "%s_H" % self.note.upper(),
@@ -131,13 +117,13 @@ class _CWriter(_Writer):
         print
         print Periodic.STRUCT
         print
-        print Message.STRUCT
+        print CMessage.STRUCT
         print
         for m in self.messages:
-            self._print_id(m)
+            m.print_id()
         print
         for m in self.messages:
-            self._print_length(m)
+            m.print_length()
         print
         print "#define NUM_PERIODIC_MESSAGES %d" % len(self.periodic)
         print "#define PERIODIC_MESSAGE_INITIALIZER {", ", ".join([p.get_initializer() for p in self.periodic]), "};"
@@ -148,62 +134,78 @@ class _CWriter(_Writer):
 
 class MacroWriter(_CWriter):
 
+    CHECK_FN    = "comm_check_free_space"
+    START_FN    = "comm_start_message"
+    END_FN      = "comm_end_message"
+    OVERRUN_FN  = "comm_overrun"
+    PUT_CH_FN   = "comm_send_message_ch"
+
     def _print_send_function(self, m):
-        name = m.name.upper()
-        print "#define MESSAGE_SEND_%s(" % name,
-        print ", ".join([f.name for f in m.fields]), ") \\"
+        first_params = ["_chan"]
+
+        print "#define MESSAGE_SEND_%s(" % m.name, 
+        print ", ".join(first_params + [f.name for f in m.fields]), ") \\"
         print "{ \\"
-        print "\tif (DownlinkCheckFreeSpace(%s)) { \\" % "+".join(m.sizes)
-        print "\t\tDownlinkStartMessage(\"%s\", MESSAGE_ID_%s, MESSAGE_LENGTH_%s) \\" % (name, name, name)
+        print "\tif (%s(_chan, MESSAGE_LENGTH_%s)) { \\" % (self.CHECK_FN, m.name)
+        print "\t\t%s(_chan, MESSAGE_ID_%s, MESSAGE_LENGTH_%s); \\" % (self.START_FN, m.name, m.name)
         for f in m.fields:
-            print "\t\t_Put%sByAddr((%s)) \\" % (f.type.title(), f.name)
-        print "\t\tDownlinkEndMessage() \\"
+            if f.is_array:
+                offset = 0;
+                for i in range(f.length):
+                    print "\t\t_Put%sByAddr(_chan, (%s + %d)) \\" % (f.type.title(), f.name, offset)
+                    offset += f.element_length
+            else:
+                print "\t\t_Put%sByAddr(_chan, (%s)) \\" % (f.type.title(), f.name)
+        print "\t\t%s(_chan); \\" % self.END_FN
         print "\t} else \\"
-        print "\t\tDownlinkOverrun(); \\"
+        print "\t\t%s(_chan); \\" % self.OVERRUN_FN
         print "}"
         print
 
     def _print_accessor(self, m):
         offset = 0
-        name = m.name.upper()
         for f in m.fields:
-            print "#define MESSAGE_%s_GET_FROM_BUFFER_%s(_payload)" % (name, f.name),
-            if ARRAY_LENGTH.match(f.type):
-                pass
+            print "#define MESSAGE_%s_GET_FROM_BUFFER_%s(_payload)" % (m.name, f.name),
+            _type = f.get_ppz_type()
+            if f.is_array:
+                l = f.length * f.element_length
+                print "(%s *)((uint8_t*)_payload+%d)" % (_type, offset)
             else:
-                l = get_field_length(f.type)
+                l = f.length
                 if l == 1:
-                    print "(%s_t)(*((uint8_t*)_payload+%d))" % (f.type, offset)
+                    print "(%s)(*((uint8_t*)_payload+%d))" % (_type, offset)
                 elif l == 2:
-                    print "(%s_t)(*((uint8_t*)_payload+%d)|*((uint8_t*)_payload+%d+1)<<8)" % (f.type, offset, offset)
+                    print "(%s)(*((uint8_t*)_payload+%d)|*((uint8_t*)_payload+%d+1)<<8)" % (_type, offset, offset)
                 elif l == 4:
-                    if f.type == "float":
+                    if _type == "float_t":
                         print "({ union { uint32_t u; float f; } _f; _f.u = (uint32_t)(*((uint8_t*)_payload+%d)|*((uint8_t*)_payload+%d+1)<<8|((uint32_t)*((uint8_t*)_payload+%d+2))<<16|((uint32_t)*((uint8_t*)_payload+%d+3))<<24); _f.f; })" % (offset, offset, offset, offset)
                     else:
-                        print "(%s_t)(*((uint8_t*)_payload+%d)|*((uint8_t*)_payload+%d+1)<<8|((uint32_t)*((uint8_t*)_payload+%d+2))<<16|((uint32_t)*((uint8_t*)_payload+%d+3))<<24)" % (f.type, offset, offset, offset, offset)
+                        print "(%s)(*((uint8_t*)_payload+%d)|*((uint8_t*)_payload+%d+1)<<8|((uint32_t)*((uint8_t*)_payload+%d+2))<<16|((uint32_t)*((uint8_t*)_payload+%d+3))<<24)" % (_type, offset, offset, offset, offset)
+            offset += l
 
 
     def preamble(self):
         _CWriter.preamble(self)
-        print "#define _Put1ByteByAddr(_byte) {     \\"
+        print "#define _Put1ByteByAddr(_chan, _byte) {     \\"
         print "\tuint8_t _x = *(_byte);         \\"
-        print "\tDownlinkPutUint8(_x);     \\"
+        print "\t%s(_chan, _x);     \\" % self.PUT_CH_FN
         print "}"
-        print "#define _Put2ByteByAddr(_byte) { \\"
-        print "\t_Put1ByteByAddr(_byte);    \\"
-        print "\t_Put1ByteByAddr((const uint8_t*)_byte+1);    \\"
+        print "#define _Put2ByteByAddr(_chan, _byte) { \\"
+        print "\t_Put1ByteByAddr(_chan, _byte);    \\"
+        print "\t_Put1ByteByAddr(_chan, (const uint8_t*)_byte+1);    \\"
         print "}"
-        print "#define _Put4ByteByAddr(_byte) { \\"
-        print "\t_Put2ByteByAddr(_byte);    \\"
-        print "\t_Put2ByteByAddr((const uint8_t*)_byte+2);    \\"
+        print "#define _Put4ByteByAddr(_chan, _byte) { \\"
+        print "\t_Put2ByteByAddr(_chan, _byte);    \\"
+        print "\t_Put2ByteByAddr(_chan, (const uint8_t*)_byte+2);    \\"
         print "}"
-        print "#define _PutInt8ByAddr(_x) _Put1ByteByAddr(_x)"
-        print "#define _PutUint8ByAddr(_x) _Put1ByteByAddr((const uint8_t*)_x)"
-        print "#define _PutInt16ByAddr(_x) _Put2ByteByAddr((const uint8_t*)_x)"
-        print "#define _PutUint16ByAddr(_x) _Put2ByteByAddr((const uint8_t*)_x)"
-        print "#define _PutInt32ByAddr(_x) _Put4ByteByAddr((const uint8_t*)_x)"
-        print "#define _PutUint32ByAddr(_x) _Put4ByteByAddr((const uint8_t*)_x)"
-        print "#define _PutFloatByAddr(_x) _Put4ByteByAddr((const uint8_t*)_x)"
+        print "#define _PutInt8ByAddr(_chan, _x) _Put1ByteByAddr(_chan, _x)"
+        print "#define _PutCharByAddr(_chan, _x) _Put1ByteByAddr(_chan, (const uint8_t*)_x)"
+        print "#define _PutUint8ByAddr(_chan, _x) _Put1ByteByAddr(_chan, (const uint8_t*)_x)"
+        print "#define _PutInt16ByAddr(_chan, _x) _Put2ByteByAddr(_chan, (const uint8_t*)_x)"
+        print "#define _PutUint16ByAddr(_chan, _x) _Put2ByteByAddr(_chan, (const uint8_t*)_x)"
+        print "#define _PutInt32ByAddr(_chan, _x) _Put4ByteByAddr(_chan, (const uint8_t*)_x)"
+        print "#define _PutUint32ByAddr(_chan, _x) _Put4ByteByAddr(_chan, (const uint8_t*)_x)"
+        print "#define _PutFloatByAddr(_chan, _x) _Put4ByteByAddr(_chan, (const uint8_t*)_x)"
         print
 
     def body(self):
@@ -218,27 +220,13 @@ class FunctionWriter(_CWriter):
     def _print_pack_function(self, m):
         name = m.name.lower()
         print "static inline void message_send_%s(" % name,
-        print ", ".join(["%s %s" % (f.type, f.name) for f in m.fields]), ")"
+        print ", ".join(["%s %s" % (f.get_ppz_type(), f.name) for f in m.fields]), ")"
         print "{"
         print "}"
 
     def preamble(self):
         _CWriter.preamble(self)
         print "static inline void message_start(uint8_t id, uint8_t len)\n{\n}"
-
-#    comm_send_ch(chan, STX);
-#    comm_status[chan].ck_a = len;
-#    comm_status[chan].ck_b = len;
-#    COMM_SEND_CH(chan, len+4);
-#    COMM_SEND_CH(chan, ACID);
-#    COMM_SEND_CH(chan, id);
-#}
-
-#void
-#comm_end_message ( CommChannel_t chan )
-#{
-#    comm_send_ch(chan, comm_status[chan].ck_a);
-#    comm_send_ch(chan, comm_status[chan].ck_a);
 
     def body(self):
         for m in self.messages:
@@ -284,7 +272,7 @@ class RSTWriter(_Writer):
         _print_header()
         
         for f in m.fields:
-            _print_field(f.name, f.type)
+            _print_field(f.name, f.ctype)
         
         _print_header()
 
@@ -340,7 +328,7 @@ if __name__ == "__main__":
         x = xmlobject.XMLFile(path=messages_path)
 
         #must have some valid messaeges
-        messages = [Message(m) for m in x.root.message]
+        messages = [CMessage(m) for m in x.root.message]
         #check for duplicate message IDs
         ids = {}
         for m in messages:
