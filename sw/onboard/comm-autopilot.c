@@ -4,10 +4,10 @@
 #include "gps.h"
 #include "booz2_imu.h"
 
-bool_t
+uint8_t
 comm_autopilot_send ( CommChannel_t chan, uint8_t msgid )
 {
-    uint8_t ret = TRUE;
+    uint8_t ret = 1;
 
     switch (msgid)
     {
@@ -60,7 +60,7 @@ comm_autopilot_send ( CommChannel_t chan, uint8_t msgid )
             MESSAGE_SEND_STATUS(chan, &rc_status, &booz_gps_state.fix );
             break;
         default:
-            ret = FALSE;
+            ret = 0;
             break;
     }
 

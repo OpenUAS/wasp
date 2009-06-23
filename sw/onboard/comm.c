@@ -6,8 +6,11 @@
 #include "sys_time.h"
 #include "generated/build.h"
 
+// Global static variables holding the comm buffers
+// Comm number (COMM_NB) is the number of comm channels
 CommRXMessageCallback_t  comm_callback_rx[COMM_NB];
 CommTXMessageCallback_t  comm_callback_tx[COMM_NB];
+
 CommMessage_t            comm_message[COMM_NB];
 CommStatus_t             comm_status[COMM_NB];
 uint8_t                  comm_channel_used[COMM_NB];
